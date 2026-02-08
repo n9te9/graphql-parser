@@ -398,7 +398,17 @@ func TestParseOperationDefinition(t *testing.T) {
 								DefaultValue: &ast.IntValue{Value: 10},
 							},
 						},
-						// ... SelectionSet
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "id"},
+										Value: &ast.Variable{Name: "id"},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -416,7 +426,7 @@ func TestParseOperationDefinition(t *testing.T) {
 								SelectionSet: []ast.Selection{
 									&ast.Field{Name: &ast.Name{Value: "id"}},
 									&ast.InlineFragment{
-										TypeCondition: nil, // ここがnilでパースされるか
+										TypeCondition: nil,
 										Directives: []*ast.Directive{
 											{
 												Name: "include",
@@ -426,7 +436,9 @@ func TestParseOperationDefinition(t *testing.T) {
 											},
 										},
 										SelectionSet: []ast.Selection{
-											&ast.Field{Name: &ast.Name{Value: "email"}},
+											&ast.Field{
+												Name: &ast.Name{Value: "email"},
+											},
 										},
 									},
 								},
@@ -467,10 +479,106 @@ func TestParseOperationDefinition(t *testing.T) {
     `,
 			expect: &ast.Document{
 				Definitions: []ast.Definition{
-					&ast.OperationDefinition{Operation: ast.Query, Name: &ast.Name{Value: "GetUser"}},
-					&ast.OperationDefinition{Operation: ast.Mutation, Name: &ast.Name{Value: "UpdateUser"}},
+					&ast.OperationDefinition{
+						Operation: ast.Query, Name: &ast.Name{Value: "GetUser"},
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								SelectionSet: []ast.Selection{
+									&ast.Field{Name: &ast.Name{Value: "id"}},
+								},
+							},
+						},
+					},
+					&ast.OperationDefinition{
+						Operation: ast.Mutation, Name: &ast.Name{Value: "UpdateUser"},
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "updateUser"},
+								SelectionSet: []ast.Selection{
+									&ast.Field{Name: &ast.Name{Value: "id"}},
+								},
+							},
+						},
+					},
 				},
 			},
+		},
+		{
+			name:  "Variable Definition with Directive",
+			input: `query ($id: ID! @deprecated(reason: "use uuid")) { user(id: $id) }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						VariableDefinitions: []*ast.VariableDefinition{
+							{
+								Variable: &ast.Variable{Name: "id"},
+								Type: &ast.NonNullType{
+									Type: &ast.NamedType{Name: &ast.Name{Value: "ID"}},
+								},
+								Directives: []*ast.Directive{
+									{
+										Name: "deprecated",
+										Arguments: []*ast.Argument{
+											{
+												Name:  &ast.Name{Value: "reason"},
+												Value: &ast.StringValue{Value: "use uuid"},
+											},
+										},
+									},
+								},
+							},
+						},
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "id"},
+										Value: &ast.Variable{Name: "id"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "Document with BOM",
+			input: "\uFEFFquery { id }",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{Name: &ast.Name{Value: "id"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "Fragment Named on",
+			input: `fragment on on User { id }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.FragmentDefinition{
+						Name:          &ast.Name{Value: "on"}, // 名前が "on"
+						TypeCondition: &ast.NamedType{Name: &ast.Name{Value: "User"}},
+						SelectionSet: []ast.Selection{
+							&ast.Field{Name: &ast.Name{Value: "id"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "Empty Selection Set",
+			input:   `query { user { } }`,
+			wantErr: "empty selection set",
+			expect:  nil,
 		},
 		{
 			name:    "Invalid Variable Definition (Missing Colon)",
@@ -522,6 +630,324 @@ func TestParseOperationDefinition(t *testing.T) {
 
 			if diff := cmp.Diff(tt.expect, got, opts...); diff != "" {
 				t.Errorf("ParseDocument() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+		expect  *ast.Document
+	}{
+		{
+			name:    "Keywords as Field Names",
+			input:   `{ type query fragment on }`,
+			wantErr: "",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{Name: &ast.Name{Value: "type"}},
+							&ast.Field{Name: &ast.Name{Value: "query"}},
+							&ast.Field{Name: &ast.Name{Value: "fragment"}},
+							&ast.Field{Name: &ast.Name{Value: "on"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "Negative Int and Float",
+			input:   `{ calculate(diff: -5, factor: -1.5) }`,
+			wantErr: "",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "calculate"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "diff"},
+										Value: &ast.IntValue{Value: -5},
+									},
+									{
+										Name:  &ast.Name{Value: "factor"},
+										Value: &ast.FloatValue{Value: -1.5},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "Empty List and Object",
+			input:   `{ search(ids: [], filter: {}) }`,
+			wantErr: "",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "search"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "ids"},
+										Value: &ast.ListValue{Values: nil},
+									},
+									{
+										Name:  &ast.Name{Value: "filter"},
+										Value: &ast.ObjectValue{Fields: nil},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "Boolean vs Enum",
+			input:   `{ check(a: true, b: TRUE, c: null, d: NULL) }`,
+			wantErr: "",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "check"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "a"},
+										Value: &ast.BooleanValue{Value: true},
+									},
+									{
+										Name:  &ast.Name{Value: "b"},
+										Value: &ast.EnumValue{Value: "TRUE"},
+									},
+									{
+										Name:  &ast.Name{Value: "c"},
+										Value: &ast.NullValue{},
+									},
+									{
+										Name:  &ast.Name{Value: "d"},
+										Value: &ast.EnumValue{Value: "NULL"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "Invalid Syntax (Missing Value)",
+			input:   `{ user(id: ) }`,
+			wantErr: "unexpected token",
+			expect:  nil,
+		},
+		{
+			name:    "Invalid Variable Definition",
+			input:   `query($id) { user }`,
+			wantErr: "expected",
+			expect:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			got := p.ParseDocument()
+
+			errors := p.Errors()
+
+			if tt.wantErr != "" {
+				if len(errors) == 0 {
+					t.Errorf("expected error containing %q, got none", tt.wantErr)
+					return
+				}
+
+				found := false
+				for _, err := range errors {
+					if strings.Contains(err, tt.wantErr) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, errors)
+				}
+				return
+			}
+
+			if len(errors) > 0 {
+				t.Fatalf("unexpected parser errors: %v", errors)
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreTypes(token.Token{}),
+			}
+			if diff := cmp.Diff(tt.expect, got, opts...); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseStrictSpecCompliance(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+		expect  *ast.Document
+	}{
+		{
+			name: "Block String with Indentation",
+			input: `
+				{
+					description(text: """
+						Hello,
+						  World!
+					""")
+				}
+			`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "description"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "text"},
+										Value: &ast.StringValue{Value: "Hello,\n  World!"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "String with Unicode Escapes",
+			input: `{ user(name: "\u004E\u0061\u006E\u0061") }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "name"},
+										Value: &ast.StringValue{Value: "Nana"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Comments Everywhere",
+			input: `
+				query { # This is a comment
+					user # comment after field
+					(id: 1) # comment inside arguments
+				}
+			`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								Arguments: []*ast.Argument{
+									{
+										Name:  &ast.Name{Value: "id"},
+										Value: &ast.IntValue{Value: 1},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "Complex Default Value",
+			input: `query ($filter: Filter = { active: true, tags: ["a", "b"] }) { search }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						VariableDefinitions: []*ast.VariableDefinition{
+							{
+								Variable: &ast.Variable{Name: "filter"},
+								Type:     &ast.NamedType{Name: &ast.Name{Value: "Filter"}},
+								DefaultValue: &ast.ObjectValue{
+									Fields: []*ast.ObjectField{
+										{
+											Name:  &ast.Name{Value: "active"},
+											Value: &ast.BooleanValue{Value: true},
+										},
+										{
+											Name: &ast.Name{Value: "tags"},
+											Value: &ast.ListValue{
+												Values: []ast.Value{
+													&ast.StringValue{Value: "a"},
+													&ast.StringValue{Value: "b"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						SelectionSet: []ast.Selection{
+							&ast.Field{Name: &ast.Name{Value: "search"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := parser.New(l)
+			got := p.ParseDocument()
+
+			errors := p.Errors()
+			if tt.wantErr != "" {
+				return
+			}
+			if len(errors) > 0 {
+				t.Fatalf("unexpected parser errors: %v", errors)
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreTypes(token.Token{}),
+				cmpopts.EquateEmpty(),
+			}
+			if diff := cmp.Diff(tt.expect, got, opts...); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

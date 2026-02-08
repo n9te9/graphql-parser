@@ -47,7 +47,10 @@ func (p *Parser) ParseDocument() *ast.Document {
 		if stmt != nil {
 			doc.Definitions = append(doc.Definitions, stmt)
 		}
-		p.nextToken()
+
+		if len(p.errors) > 0 {
+			return nil
+		}
 	}
 
 	return doc

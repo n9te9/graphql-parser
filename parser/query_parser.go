@@ -2,7 +2,9 @@ package parser
 
 import (
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 
 	"github.com/n9te9/graphql-parser/ast"
 	"github.com/n9te9/graphql-parser/token"
@@ -51,9 +53,12 @@ func (p *Parser) parseFragmentDefinition() ast.Definition {
 	stmt := &ast.FragmentDefinition{Token: p.curToken}
 	p.nextToken()
 
-	if !p.expectPeek(token.IDENT) {
+	fmt.Println(p.curToken)
+	if !p.isKeywordToken() && !p.curTokenIs(token.IDENT) {
+		p.errors = append(p.errors, "expected fragment name")
 		return nil
 	}
+
 	stmt.Name = &ast.Name{Token: p.curToken, Value: p.curToken.Literal}
 
 	if !p.expectPeek(token.ON) {
@@ -63,16 +68,20 @@ func (p *Parser) parseFragmentDefinition() ast.Definition {
 	if !p.expectPeek(token.IDENT) {
 		return nil
 	}
+
 	stmt.TypeCondition = &ast.NamedType{
 		Token: p.curToken,
 		Name:  &ast.Name{Token: p.curToken, Value: p.curToken.Literal},
 	}
 
+	p.nextToken()
 	stmt.Directives = p.parseDirectives()
 
-	if !p.expectPeek(token.BRACE_L) {
+	if !p.curTokenIs(token.BRACE_L) {
+		p.peekError(token.BRACE_L)
 		return nil
 	}
+
 	stmt.SelectionSet = p.parseSelectionSet()
 
 	return stmt
@@ -83,7 +92,10 @@ func (p *Parser) parseSelectionSet() []ast.Selection {
 
 	if p.curTokenIs(token.BRACE_L) {
 		p.nextToken()
-	} else {
+	}
+
+	if p.curTokenIs(token.BRACE_R) {
+		p.errors = append(p.errors, "empty selection set")
 		return nil
 	}
 
@@ -105,15 +117,31 @@ func (p *Parser) parseSelectionSet() []ast.Selection {
 }
 
 func (p *Parser) parseSelection() ast.Selection {
-	if p.curTokenIs(token.IDENT) {
+	if p.curTokenIs(token.IDENT) || p.isKeywordToken() {
 		return p.parseField()
 	}
+
 	if p.curTokenIs(token.SPREAD) {
 		return p.parseFragment()
 	}
 
 	p.nextToken()
 	return nil
+}
+
+func (p *Parser) isKeywordToken() bool {
+	return p.curTokenIs(token.QUERY) ||
+		p.curTokenIs(token.MUTATION) ||
+		p.curTokenIs(token.SUBSCRIPTION) ||
+		p.curTokenIs(token.FRAGMENT) ||
+		p.curTokenIs(token.ON) ||
+		p.curTokenIs(token.TYPE) ||
+		p.curTokenIs(token.INPUT) ||
+		p.curTokenIs(token.ENUM) ||
+		p.curTokenIs(token.UNION) ||
+		p.curTokenIs(token.INTERFACE) ||
+		p.curTokenIs(token.SCALAR) ||
+		p.curTokenIs(token.DIRECTIVE)
 }
 
 func (p *Parser) parseFragment() ast.Selection {
@@ -136,6 +164,16 @@ func (p *Parser) parseFragment() ast.Selection {
 			TypeCondition: typeCondition,
 			Directives:    dirs,
 			SelectionSet:  p.parseSelectionSet(),
+		}
+	}
+
+	if p.curTokenIs(token.AT) || p.curTokenIs(token.BRACE_L) {
+		dirs := p.parseDirectives()
+
+		return &ast.InlineFragment{
+			Token:        startToken,
+			Directives:   dirs,
+			SelectionSet: p.parseSelectionSet(),
 		}
 	}
 
@@ -191,7 +229,7 @@ func (p *Parser) parseValue() ast.Value {
 		p.nextToken()
 		return lit
 	case token.STRING:
-		lit := &ast.StringValue{Token: p.curToken, Value: p.curToken.Literal}
+		lit := &ast.StringValue{Token: p.curToken, Value: unquoteGeneric(p.curToken.Literal)}
 		p.nextToken()
 		return lit
 	case token.TRUE, token.FALSE:
@@ -218,10 +256,94 @@ func (p *Parser) parseValue() ast.Value {
 	case token.BRACE_L:
 		v := p.parseObjectValue()
 		return v
+	case token.BLOCK_STRING:
+		lit := &ast.StringValue{Token: p.curToken, Value: dedentBlockStringValue(p.curToken.Literal)}
+		p.nextToken()
+		return lit
 	default:
 		p.errors = append(p.errors, fmt.Sprintf("unexpected token for value: %s", p.curToken.Type))
 		return nil
 	}
+}
+
+func unquoteGeneric(s string) string {
+	quoted := `"` + s + `"`
+
+	if unquoted, err := strconv.Unquote(quoted); err == nil {
+		return unquoted
+	}
+	return s
+}
+
+func dedentBlockStringValue(rawString string) string {
+	lines := strings.Split(rawString, "\n")
+
+	commonIndent := math.MaxInt
+	foundCommonIndent := false
+
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+
+		indent := countLeadingWhitespace(line)
+
+		if indent < len(line) {
+			if indent < commonIndent {
+				commonIndent = indent
+				foundCommonIndent = true
+			}
+		}
+	}
+
+	if !foundCommonIndent {
+		commonIndent = 0
+	}
+
+	if commonIndent > 0 {
+		for i, line := range lines {
+			if i == 0 {
+				continue
+			}
+			if len(line) >= commonIndent {
+				lines[i] = line[commonIndent:]
+			}
+		}
+	}
+
+	for len(lines) > 0 {
+		if isBlank(lines[0]) {
+			lines = lines[1:]
+		} else {
+			break
+		}
+	}
+
+	for len(lines) > 0 {
+		if isBlank(lines[len(lines)-1]) {
+			lines = lines[:len(lines)-1]
+		} else {
+			break
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func countLeadingWhitespace(s string) int {
+	count := 0
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			count++
+		} else {
+			break
+		}
+	}
+	return count
+}
+
+func isBlank(s string) bool {
+	return countLeadingWhitespace(s) == len(s)
 }
 
 // parseVariable parses $name
