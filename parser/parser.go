@@ -57,11 +57,30 @@ func (p *Parser) ParseDocument() *ast.Document {
 }
 
 func (p *Parser) parseDefinition() ast.Definition {
+	description := p.parseDescription()
 	switch p.curToken.Type {
 	case token.QUERY, token.MUTATION, token.SUBSCRIPTION, token.BRACE_L:
 		return p.parseOperationDefinition()
 	case token.FRAGMENT:
 		return p.parseFragmentDefinition()
+	case token.TYPE:
+		return p.parseObjectTypeDefinition(description)
+	case token.INTERFACE:
+		return p.parseInterfaceTypeDefinition(description)
+	case token.UNION:
+		return p.parseUnionTypeDefinition(description)
+	case token.ENUM:
+		return p.parseEnumTypeDefinition(description)
+	case token.INPUT:
+		return p.parseInputObjectTypeDefinition(description)
+	case token.SCALAR:
+		return p.parseScalarTypeDefinition(description)
+	case token.SCHEMA:
+		return p.parseSchemaDefinition(description)
+	case token.DIRECTIVE:
+		return p.parseDirectiveDefinition(description)
+	case token.EXTEND:
+		return p.parseExtendDefinition(description)
 	default:
 		p.errors = append(p.errors, fmt.Sprintf("Unexpected token at top level: %s", p.curToken.Literal))
 		return nil
@@ -121,4 +140,14 @@ func (p *Parser) parseType() ast.Type {
 		return nonNull
 	}
 	return t
+}
+
+func (p *Parser) parseName() (*ast.Name, error) {
+	if p.curTokenIs(token.IDENT) || p.isKeywordToken() {
+		name := &ast.Name{Token: p.curToken, Value: p.curToken.Literal}
+		p.nextToken()
+		return name, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse name at line: %d column: %d", p.curToken.Line, p.curToken.Start)
 }
