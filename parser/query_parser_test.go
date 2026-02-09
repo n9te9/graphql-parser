@@ -575,6 +575,64 @@ func TestParseOperationDefinition(t *testing.T) {
 			},
 		},
 		{
+			name:  "Fragment Spread with Directives",
+			input: `query { user { ...UserFields @include(if: $verbose) } }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "user"},
+								SelectionSet: []ast.Selection{
+									&ast.FragmentSpread{
+										Name: &ast.Name{Value: "UserFields"},
+										Directives: []*ast.Directive{
+											{
+												Name: "include",
+												Arguments: []*ast.Argument{
+													{Name: &ast.Name{Value: "if"}, Value: &ast.Variable{Name: "verbose"}},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "Variable with Default Value and Directive",
+			input: `query ($limit: Int = 10 @deprecated) { users(limit: $limit) }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						VariableDefinitions: []*ast.VariableDefinition{
+							{
+								Variable:     &ast.Variable{Name: "limit"},
+								Type:         &ast.NamedType{Name: &ast.Name{Value: "Int"}},
+								DefaultValue: &ast.IntValue{Value: 10},
+								Directives: []*ast.Directive{
+									{Name: "deprecated"},
+								},
+							},
+						},
+						SelectionSet: []ast.Selection{
+							&ast.Field{
+								Name: &ast.Name{Value: "users"},
+								Arguments: []*ast.Argument{
+									{Name: &ast.Name{Value: "limit"}, Value: &ast.Variable{Name: "limit"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name:    "Empty Selection Set",
 			input:   `query { user { } }`,
 			wantErr: "empty selection set",
@@ -921,6 +979,20 @@ func TestParseStrictSpecCompliance(t *testing.T) {
 						},
 						SelectionSet: []ast.Selection{
 							&ast.Field{Name: &ast.Name{Value: "search"}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:  "Query Document with BOM",
+			input: "\uFEFF{ me }",
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.OperationDefinition{
+						Operation: ast.Query,
+						SelectionSet: []ast.Selection{
+							&ast.Field{Name: &ast.Name{Value: "me"}},
 						},
 					},
 				},

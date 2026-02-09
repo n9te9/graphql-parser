@@ -500,6 +500,27 @@ func TestParseInterfaceTypeDefinition_Strict(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:  "Type Implements with Leading Ampersand",
+			input: `type User implements & Node & Entity { id: ID }`,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.ObjectTypeDefinition{
+						Name: &ast.Name{Value: "User"},
+						Interfaces: []*ast.NamedType{
+							{Name: &ast.Name{Value: "Node"}},
+							{Name: &ast.Name{Value: "Entity"}},
+						},
+						Fields: []*ast.FieldDefinition{
+							{
+								Name: &ast.Name{Value: "id"},
+								Type: &ast.NamedType{Name: &ast.Name{Value: "ID"}},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1123,6 +1144,26 @@ func TestParseSchemaDefinition(t *testing.T) {
 							{
 								Operation: token.SUBSCRIPTION,
 								Type:      &ast.NamedType{Name: &ast.Name{Value: "RootSubscription"}},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Schema Definition with Description",
+			input: `
+                "The Root Schema"
+                schema { query: Query }
+            `,
+			expect: &ast.Document{
+				Definitions: []ast.Definition{
+					&ast.SchemaDefinition{
+						Description: "The Root Schema",
+						OperationTypes: []*ast.OperationTypeDefinition{
+							{
+								Operation: token.QUERY,
+								Type:      &ast.NamedType{Name: &ast.Name{Value: "Query"}},
 							},
 						},
 					},
