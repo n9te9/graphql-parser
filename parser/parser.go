@@ -60,8 +60,14 @@ func (p *Parser) parseDefinition() ast.Definition {
 	description := p.parseDescription()
 	switch p.curToken.Type {
 	case token.QUERY, token.MUTATION, token.SUBSCRIPTION, token.BRACE_L:
+		if description != "" {
+			p.errors = append(p.errors, fmt.Sprintf("Executable definitions cannot have a description at line: %d", p.curToken.Line))
+		}
 		return p.parseOperationDefinition()
 	case token.FRAGMENT:
+		if description != "" {
+			p.errors = append(p.errors, fmt.Sprintf("Executable definitions cannot have a description at line: %d", p.curToken.Line))
+		}
 		return p.parseFragmentDefinition()
 	case token.TYPE:
 		return p.parseObjectTypeDefinition(description)

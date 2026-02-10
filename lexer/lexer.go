@@ -1,6 +1,10 @@
 package lexer
 
 import (
+	"fmt"
+	"math"
+	"strings"
+
 	"github.com/n9te9/graphql-parser/token"
 )
 
@@ -203,23 +207,69 @@ func (l *Lexer) readDigits() {
 
 func (l *Lexer) readString() string {
 	l.readChar()
-	position := l.position
+	var out []byte
 	for {
 		if l.ch == '"' || l.ch == 0 {
 			break
 		}
 		if l.ch == '\\' {
 			l.readChar()
+			switch l.ch {
+			case '"':
+				out = append(out, '"')
+			case '\\':
+				out = append(out, '\\')
+			case '/':
+				out = append(out, '/')
+			case 'b':
+				out = append(out, '\b')
+			case 'f':
+				out = append(out, '\f')
+			case 'n':
+				out = append(out, '\n')
+			case 'r':
+				out = append(out, '\r')
+			case 't':
+				out = append(out, '\t')
+			case 'u':
+				if l.peekChar() == '{' {
+					l.readChar() // consume '{'
+					l.readChar()
+					start := l.position
+					for isHexDigit(l.ch) {
+						l.readChar()
+					}
+					if l.ch == '}' {
+						hexStr := string(l.input[start:l.position])
+						var codePoint uint32
+						fmt.Sscanf(hexStr, "%x", &codePoint)
+						out = append(out, string(rune(codePoint))...)
+					}
+					// l.ch is now '}', it will be advanced at the end of loop
+				} else {
+					// handle standard \uXXXX
+					l.readChar()
+					start := l.position
+					for i := 0; i < 3; i++ {
+						l.readChar()
+					}
+					hexStr := string(l.input[start : l.position+1])
+					var codePoint uint32
+					fmt.Sscanf(hexStr, "%x", &codePoint)
+					out = append(out, string(rune(codePoint))...)
+				}
+			}
+		} else {
+			out = append(out, l.ch)
 		}
 		l.readChar()
 	}
-	str := string(l.input[position:l.position])
 
 	if l.ch == '"' {
 		l.readChar()
 	}
 
-	return str
+	return string(out)
 }
 
 func (l *Lexer) readBlockString() string {
@@ -230,6 +280,11 @@ func (l *Lexer) readBlockString() string {
 			break
 		}
 		if l.ch == '"' && l.peekChar() == '"' && l.peekChar2() == '"' {
+			// Check if it's escaped \"""
+			if l.position > 0 && l.input[l.position-1] == '\\' {
+				l.readChar()
+				continue
+			}
 			break
 		}
 		if l.ch == '\n' {
@@ -244,7 +299,60 @@ func (l *Lexer) readBlockString() string {
 	l.readChar()
 	l.readChar()
 
-	return str
+	return dedentBlockStringValue(str)
+}
+
+func dedentBlockStringValue(raw string) string {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	commonIndent := math.MaxInt32
+
+	for i, line := range lines {
+		if i == 0 && len(lines) > 1 {
+			continue
+		}
+		indent := leadingWhitespace(line)
+		if indent < len(line) {
+			if indent < commonIndent {
+				commonIndent = indent
+			}
+		}
+	}
+
+	if commonIndent == math.MaxInt32 {
+		commonIndent = 0
+	}
+
+	if commonIndent > 0 {
+		for i := 1; i < len(lines); i++ {
+			if len(lines[i]) >= commonIndent {
+				lines[i] = lines[i][commonIndent:]
+			} else {
+				lines[i] = ""
+			}
+		}
+	}
+
+	for len(lines) > 0 && isBlank(lines[0]) {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && isBlank(lines[len(lines)-1]) {
+		lines = lines[:len(lines)-1]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func leadingWhitespace(str string) int {
+	for i, r := range str {
+		if r != ' ' && r != '\t' {
+			return i
+		}
+	}
+	return len(str)
+}
+
+func isBlank(str string) bool {
+	return leadingWhitespace(str) == len(str)
 }
 
 func (l *Lexer) skipWhitespace() {
@@ -291,4 +399,8 @@ func isLetter(ch byte) bool {
 
 func isDigit(ch byte) bool {
 	return '0' <= ch && ch <= '9'
+}
+
+func isHexDigit(ch byte) bool {
+	return isDigit(ch) || ('a' <= ch && ch <= 'f') || ('A' <= ch && ch <= 'F')
 }

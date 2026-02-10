@@ -889,7 +889,7 @@ func TestParseStrictSpecCompliance(t *testing.T) {
 								Arguments: []*ast.Argument{
 									{
 										Name:  &ast.Name{Value: "text"},
-										Value: &ast.StringValue{Value: "Hello,\n  World!"},
+										Value: &ast.StringValue{Value: "Hello,\nWorld!"},
 									},
 								},
 							},
@@ -1098,4 +1098,106 @@ func TestParseFragmentDefinition(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnicode(t *testing.T) {
+	input := `
+	{
+		field(arg: "\u{1F600}")
+	}
+	`
+	l := lexer.New(input)
+	p := parser.New(l)
+	doc := p.ParseDocument()
+
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser has %d errors: %v", len(p.Errors()), p.Errors())
+	}
+
+	op := doc.Definitions[0].(*ast.OperationDefinition)
+	field := op.SelectionSet[0].(*ast.Field)
+	arg := field.Arguments[0]
+	val := arg.Value.(*ast.StringValue)
+
+	if val.Value != "😀" {
+		t.Errorf("expected 😀, got %s", val.Value)
+	}
+}
+
+func TestRepeatableDirective(t *testing.T) {
+	input := `
+	directive @test repeatable on FIELD
+	`
+	l := lexer.New(input)
+	p := parser.New(l)
+	doc := p.ParseDocument()
+
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser has %d errors: %v", len(p.Errors()), p.Errors())
+	}
+
+	def := doc.Definitions[0].(*ast.DirectiveDefinition)
+	if !def.Repeatable {
+		t.Errorf("expected repeatable to be true")
+	}
+}
+
+func TestBlockStringDedent(t *testing.T) {
+	input := `
+	{
+		field(arg: """
+			line1
+			line2
+		""")
+	}
+	`
+	l := lexer.New(input)
+	p := parser.New(l)
+	doc := p.ParseDocument()
+
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser has %d errors: %v", len(p.Errors()), p.Errors())
+	}
+
+	op := doc.Definitions[0].(*ast.OperationDefinition)
+	field := op.SelectionSet[0].(*ast.Field)
+	arg := field.Arguments[0]
+	val := arg.Value.(*ast.StringValue)
+
+	expected := "line1\nline2"
+	if val.Value != expected {
+		t.Errorf("expected %q, got %q", expected, val.Value)
+	}
+}
+
+func TestExecutableDefinitionDescriptionError(t *testing.T) {
+	input := `
+	"Description"
+	query {
+		field
+	}
+	`
+	l := lexer.New(input)
+	p := parser.New(l)
+	_ = p.ParseDocument()
+
+	if len(p.Errors()) == 0 {
+		t.Fatal("expected parser error for description on query")
+	}
+
+	expectedError := "Executable definitions cannot have a description"
+	found := false
+	for _, err := range p.Errors() {
+		if contains(err, expectedError) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error containing %q, got %v", expectedError, p.Errors())
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s[:len(substr)] == substr || contains(s[1:], substr))
 }
