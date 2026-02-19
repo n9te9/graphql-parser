@@ -53,7 +53,6 @@ func (p *Parser) parseFragmentDefinition() ast.Definition {
 	stmt := &ast.FragmentDefinition{Token: p.curToken}
 	p.nextToken()
 
-	fmt.Println(p.curToken)
 	if !p.isKeywordToken() && !p.curTokenIs(token.IDENT) {
 		p.errors = append(p.errors, "expected fragment name")
 		return nil
